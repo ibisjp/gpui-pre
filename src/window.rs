@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-09-25): added `Window::paint_glyph_transformed`.
 #[cfg(feature = "profiler")]
 use crate::DebugFrameOverlayMode;
 #[cfg(any(feature = "inspector", debug_assertions))]
@@ -4652,6 +4653,36 @@ impl Window {
         font_size: Pixels,
         color: Hsla,
     ) -> Result<()> {
+        self.paint_glyph_with(origin, font_id, glyph_id, font_size, color, None)
+    }
+
+    /// Paint a monochrome glyph like [`Self::paint_glyph`], then transform it
+    /// by `transformation` (in scaled pixels, about the window's origin), for
+    /// example to draw rotated text. Transformed glyphs are drawn without
+    /// subpixel antialiasing.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn paint_glyph_transformed(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
+        transformation: TransformationMatrix,
+    ) -> Result<()> {
+        self.paint_glyph_with(origin, font_id, glyph_id, font_size, color, Some(transformation))
+    }
+
+    fn paint_glyph_with(
+        &mut self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
+        transformation: Option<TransformationMatrix>,
+    ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
@@ -4669,7 +4700,8 @@ impl Window {
             (quantized_origin.y.fract() * SUBPIXEL_VARIANTS_Y as f32) as u8,
         );
         let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
-        let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
+        let subpixel_rendering =
+            transformation.is_none() && self.should_use_subpixel_rendering(font_id, font_size);
         let dilation = self.text_system().glyph_dilation_for_color(color);
         let params = RenderGlyphParams {
             font_id,
@@ -4715,7 +4747,7 @@ impl Window {
                     content_mask,
                     color: color.opacity(element_opacity),
                     tile,
-                    transformation: TransformationMatrix::unit(),
+                    transformation: transformation.unwrap_or_else(TransformationMatrix::unit),
                 });
             }
         }
