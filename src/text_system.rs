@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-09-25): added `TextSystem::line_gap`.
 mod font_fallbacks;
 mod font_features;
 mod line;
@@ -512,6 +513,11 @@ impl TextSystem {
     /// in single spaced text.
     pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
         self.read_metrics(font_id, |metrics| metrics.descent(font_size))
+    }
+
+    /// Get the font's recommended extra space between lines, for the given font and size.
+    pub fn line_gap(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        self.read_metrics(font_id, |metrics| metrics.line_gap(font_size))
     }
 
     /// Get the recommended baseline offset for the given font and line height.
