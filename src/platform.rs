@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-09-28): decoded images get `bleed_into_transparent`.
 mod app_menu;
 mod keyboard;
 mod keystroke;
@@ -2933,8 +2934,52 @@ pub(crate) fn decode_static_image_from_decoder(
     for pixel in data.chunks_exact_mut(4) {
         pixel.swap(0, 2);
     }
+    let (width, height) = (data.width() as usize, data.height() as usize);
+    bleed_into_transparent(&mut data, width, height);
 
     Ok(SmallVec::from_elem(Frame::new(data), 1))
+}
+
+/// Give each fully transparent pixel next to a visible one the average
+/// colour of its visible neighbours (keeping it transparent). Images are
+/// sampled with linear filtering in straight alpha, so a transparent pixel's
+/// colour (usually black) would otherwise bleed into the edge of what is
+/// drawn when the image is scaled, as a dark fringe.
+pub(crate) fn bleed_into_transparent(data: &mut [u8], width: usize, height: usize) {
+    if width == 0 || height == 0 || data.len() < width * height * 4 {
+        return;
+    }
+    if !data.chunks_exact(4).any(|p| p[3] == 0) || data.chunks_exact(4).all(|p| p[3] == 0) {
+        return;
+    }
+    for y in 0..height {
+        for x in 0..width {
+            let i = (y * width + x) * 4;
+            if data[i + 3] != 0 {
+                continue;
+            }
+            let mut sum = [0u32; 3];
+            let mut weight = 0u32;
+            for ny in y.saturating_sub(1)..(y + 2).min(height) {
+                for nx in x.saturating_sub(1)..(x + 2).min(width) {
+                    let j = (ny * width + nx) * 4;
+                    let a = data[j + 3] as u32;
+                    if a == 0 {
+                        continue;
+                    }
+                    for c in 0..3 {
+                        sum[c] += data[j + c] as u32 * a;
+                    }
+                    weight += a;
+                }
+            }
+            for c in 0..3 {
+                if let Some(mean) = sum[c].checked_div(weight) {
+                    data[i + c] = mean as u8;
+                }
+            }
+        }
+    }
 }
 
 impl Hash for Image {

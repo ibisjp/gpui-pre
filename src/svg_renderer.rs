@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-09-28): rendered SVGs get `bleed_into_transparent`.
 use crate::{
     AssetSource, DevicePixels, IsZero, RenderImage, Result, SharedString, Size,
     swap_rgba_pa_to_bgra,
@@ -212,6 +213,8 @@ impl SvgRenderer {
         for pixel in buffer.chunks_exact_mut(4) {
             swap_rgba_pa_to_bgra(pixel);
         }
+        let (width, height) = (buffer.width() as usize, buffer.height() as usize);
+        crate::platform::bleed_into_transparent(&mut buffer, width, height);
 
         let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
         image.scale_factor = image_scale_factor;
