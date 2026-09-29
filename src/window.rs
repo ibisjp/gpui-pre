@@ -1,5 +1,6 @@
 // Modified by ibis inc. for ibisOffice (2026-09-25): added `Window::paint_glyph_transformed`.
 // Modified by ibis inc. for ibisOffice (2026-09-29): added `Window::record_paints` and `Window::take_recorded_paints`.
+// Modified by ibis inc. for ibisOffice (2026-09-30): added `Window::record_paints_only` (recording without drawing).
 #[cfg(feature = "profiler")]
 use crate::DebugFrameOverlayMode;
 use crate::PaintRecord;
@@ -1177,6 +1178,9 @@ pub struct Window {
     /// What the frame being drawn paints, while recording (added in
     /// ibisOffice's fork: see `record_paints`).
     paint_record: Option<Vec<PaintRecord>>,
+    /// Recording only: the painted commands are recorded, not drawn (see
+    /// `record_paints_only`).
+    paint_record_only: bool,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
@@ -2029,6 +2033,7 @@ impl Window {
             invalidator,
             removed: false,
             paint_record: None,
+            paint_record_only: false,
             platform_window,
             display_id,
             is_resizable,
@@ -3277,6 +3282,18 @@ impl Window {
         self.paint_record = Some(Vec::new());
     }
 
+    /// Record what each frame paints, as [`Self::record_paints`], and leave
+    /// it out of the scene (nothing is drawn: much quicker when only the
+    /// record is wanted). `false` draws again.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn record_paints_only(&mut self, only: bool) {
+        self.paint_record_only = only;
+        if only && self.paint_record.is_none() {
+            self.paint_record = Some(Vec::new());
+        }
+    }
+
     /// What the last frame drawn painted, and stop recording; `None` when not
     /// recording.
     ///
@@ -4398,7 +4415,9 @@ impl Window {
 
         let content_mask = self.content_mask();
         let clipped_bounds = bounds.intersect(&content_mask.bounds);
-        if !clipped_bounds.is_empty() {
+        // Only recording, nothing goes in the scene: no layer either.
+        let layered = !clipped_bounds.is_empty() && !self.paint_record_only;
+        if layered {
             self.next_frame
                 .scene
                 .push_layer(self.cover_bounds(clipped_bounds));
@@ -4406,7 +4425,7 @@ impl Window {
 
         let result = f(self);
 
-        if !clipped_bounds.is_empty() {
+        if layered {
             self.next_frame.scene.pop_layer();
         }
 
@@ -4445,6 +4464,9 @@ impl Window {
                 inset: false,
                 clip,
             });
+            if self.paint_record_only {
+                continue;
+            }
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
@@ -4490,6 +4512,9 @@ impl Window {
                 inset: true,
                 clip,
             });
+            if self.paint_record_only {
+                continue;
+            }
             // Clamp at zero so a large spread can't produce negative radii, which would
             // break the SDF in the shader.
             let zero = Pixels::ZERO;
@@ -4575,6 +4600,9 @@ impl Window {
             corner_radii: quad.corner_radii,
             border_style: quad.border_style,
         });
+        if self.paint_record_only {
+            return;
+        }
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
         let quad = Quad {
@@ -4661,6 +4689,9 @@ impl Window {
             color: path.color,
             clip,
         });
+        if self.paint_record_only {
+            return;
+        }
         self.next_frame
             .scene
             .insert_primitive(path.scale(scale_factor));
@@ -4685,6 +4716,9 @@ impl Window {
             wavy: style.wavy,
             clip,
         });
+        if self.paint_record_only {
+            return;
+        }
         self.next_frame.scene.insert_primitive(underline);
     }
 
@@ -4705,6 +4739,9 @@ impl Window {
             wavy: false,
             clip,
         });
+        if self.paint_record_only {
+            return;
+        }
 
         let scale_factor = self.scale_factor();
         let height = style.thickness;
@@ -4784,6 +4821,9 @@ impl Window {
             emoji: false,
             clip,
         });
+        if self.paint_record_only {
+            return Ok(());
+        }
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
 
@@ -4898,6 +4938,9 @@ impl Window {
             emoji: true,
             clip,
         });
+        if self.paint_record_only {
+            return Ok(());
+        }
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
@@ -5045,6 +5088,9 @@ impl Window {
             grayscale,
             opacity,
         });
+        if self.paint_record_only {
+            return Ok(());
+        }
 
         let params = RenderImageParams {
             image_id: data.id,
