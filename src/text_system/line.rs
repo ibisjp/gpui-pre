@@ -1,3 +1,6 @@
+// Modified by ibis inc. for ibisOffice (2026-09-29): ShapedLine::restyled,
+// drawing a shaped line again in other colours without shaping it again.
+
 use crate::{
     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
     SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
@@ -50,6 +53,34 @@ pub struct ShapedLine {
 }
 
 impl ShapedLine {
+    /// The same line in other colours and decorations: `runs` cover the text
+    /// as those it was shaped with did (their fonts are not looked at), so
+    /// the glyphs are reused and not shaped again.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn restyled(&self, runs: &[crate::TextRun]) -> ShapedLine {
+        let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+        for run in runs {
+            if let Some(last_run) = decoration_runs.last_mut()
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
+            }
+            decoration_runs.push(DecorationRun {
+                len: run.len as u32,
+                color: run.color,
+                background_color: run.background_color,
+                underline: run.underline,
+                strikethrough: run.strikethrough,
+            });
+        }
+        ShapedLine { layout: self.layout.clone(), text: self.text.clone(), decoration_runs }
+    }
+
     /// Returns a forward-only cursor for this shaped line.
     pub fn cursor(&self) -> ShapedLineCursor<'_> {
         assert_eq!(
