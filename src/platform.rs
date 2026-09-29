@@ -1,4 +1,5 @@
 // Modified by ibis inc. for ibisOffice (2026-09-28): decoded images get `bleed_into_transparent`.
+// Modified by ibis inc. for ibisOffice (2026-09-29): added `PlatformTextSystem::font_data`.
 mod app_menu;
 mod keyboard;
 mod keystroke;
@@ -1187,6 +1188,14 @@ pub trait PlatformTextSystem: Send + Sync {
     fn prewarm_fonts(&self, _font_ids: &[FontId]) {}
     /// Get metrics for a font.
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
+    /// The data of the font file a font comes from, and the font's index in
+    /// it (a collection holds several), for embedding the font in a document
+    /// such as a PDF. `None` when the platform cannot give it.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    fn font_data(&self, _font_id: FontId) -> Option<(Arc<Vec<u8>>, u32)> {
+        None
+    }
     /// Get typographic bounds for a glyph.
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     /// Get the advance width for a glyph.

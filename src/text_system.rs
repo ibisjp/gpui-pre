@@ -1,4 +1,5 @@
 // Modified by ibis inc. for ibisOffice (2026-09-25): added `TextSystem::line_gap`.
+// Modified by ibis inc. for ibisOffice (2026-09-29): added `TextSystem::font_data`.
 mod font_fallbacks;
 mod font_features;
 mod line;
@@ -431,6 +432,15 @@ impl TextSystem {
     }
 
     /// Get the advance width for the given character, in the given font and size.
+    /// The data of the font file `font_id` comes from and the font's index in
+    /// it, for embedding the font in a document (see
+    /// [`PlatformTextSystem::font_data`]).
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn font_data(&self, font_id: FontId) -> Option<(Arc<Vec<u8>>, u32)> {
+        self.platform_text_system.font_data(font_id)
+    }
+
     pub fn advance(&self, font_id: FontId, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
         let glyph_id = self
             .platform_text_system
