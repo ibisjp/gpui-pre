@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-09-29): a `Path` keeps the outline it was tessellated from (`Path::outline`).
 // todo("windows"): remove
 #![cfg_attr(windows, allow(dead_code))]
 
@@ -8,6 +9,7 @@ use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
     Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
+use std::sync::Arc;
 use std::{
     fmt::Debug,
     iter::Peekable,
@@ -783,6 +785,67 @@ impl From<PaintSurface> for Primitive {
 #[expect(missing_docs)]
 pub struct PathId(pub usize);
 
+/// A step of a [`PathOutline`].
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OutlineVerb {
+    /// Start a new contour at the point.
+    MoveTo(Point<Pixels>),
+    /// A straight line to the point.
+    LineTo(Point<Pixels>),
+    /// A quadratic curve through the control point to the point.
+    QuadTo(Point<Pixels>, Point<Pixels>),
+    /// A cubic curve through the two control points to the point.
+    CubicTo(Point<Pixels>, Point<Pixels>, Point<Pixels>),
+    /// Close the contour.
+    Close,
+}
+
+/// How a [`PathOutline`] is stroked.
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OutlineStroke {
+    /// The width of the line.
+    pub width: Pixels,
+    /// Round ends (else butt ends).
+    pub round_caps: bool,
+    /// Round joins (else miter joins).
+    pub round_joins: bool,
+}
+
+/// The outline a [`Path`] built by a [`crate::PathBuilder`] was tessellated
+/// from, filled or stroked, for drawing it as vector graphics (in a PDF).
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathOutline {
+    /// The contours.
+    pub verbs: Vec<OutlineVerb>,
+    /// `None` for a filled outline.
+    pub stroke: Option<OutlineStroke>,
+}
+
+impl PathOutline {
+    /// The outline moved by `by`.
+    pub fn translated(&self, by: Point<Pixels>) -> Self {
+        let m = |p: Point<Pixels>| p + by;
+        let verbs = self
+            .verbs
+            .iter()
+            .map(|v| match *v {
+                OutlineVerb::MoveTo(p) => OutlineVerb::MoveTo(m(p)),
+                OutlineVerb::LineTo(p) => OutlineVerb::LineTo(m(p)),
+                OutlineVerb::QuadTo(c, p) => OutlineVerb::QuadTo(m(c), m(p)),
+                OutlineVerb::CubicTo(c1, c2, p) => OutlineVerb::CubicTo(m(c1), m(c2), m(p)),
+                OutlineVerb::Close => OutlineVerb::Close,
+            })
+            .collect();
+        Self { verbs, stroke: self.stroke }
+    }
+}
+
 /// A line made up of a series of vertices and control points.
 #[derive(Clone, Debug)]
 #[expect(missing_docs)]
@@ -796,6 +859,9 @@ pub struct Path<P: Clone + Debug + Default + PartialEq> {
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
+    /// The outline the path was tessellated from, when built by a
+    /// [`crate::PathBuilder`] (added in ibisOffice's fork).
+    pub outline: Option<Arc<PathOutline>>,
 }
 
 impl Path<Pixels> {
@@ -814,6 +880,7 @@ impl Path<Pixels> {
             content_mask: Default::default(),
             color: Default::default(),
             contour_count: 0,
+            outline: None,
         }
     }
 
@@ -832,6 +899,7 @@ impl Path<Pixels> {
             start: self.start.map(|start| start.scale(factor)),
             current: self.current.scale(factor),
             contour_count: self.contour_count,
+            outline: self.outline.clone(),
             color: self.color,
         }
     }

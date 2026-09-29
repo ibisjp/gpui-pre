@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-09-29): a built `Path` keeps its outline (`Path::outline`).
 use anyhow::Error;
 use etagere::euclid::{Point2D, Vector2D};
 use lyon::geom::Angle;
@@ -11,7 +12,8 @@ use lyon::tessellation::{
 pub use lyon::math::Transform;
 pub use lyon::tessellation::{FillOptions, FillRule, StrokeOptions};
 
-use crate::{Path, Pixels, Point, point, px};
+use crate::{OutlineStroke, OutlineVerb, Path, PathOutline, Pixels, Point, point, px};
+use std::sync::Arc;
 
 /// Style of the PathBuilder
 pub enum PathStyle {
@@ -249,9 +251,66 @@ impl PathBuilder {
         };
 
         match self.style {
-            PathStyle::Stroke(options) => Self::tessellate_stroke(self.dash_array, &path, &options),
-            PathStyle::Fill(options) => Self::tessellate_fill(&path, &options),
+            PathStyle::Stroke(options) => {
+                let dashed = Self::dashed(self.dash_array, &path);
+                let mut built = Self::tessellate_stroke(None, &dashed, &options)?;
+                let stroke = OutlineStroke {
+                    width: px(options.line_width),
+                    round_caps: options.start_cap == lyon::tessellation::LineCap::Round,
+                    round_joins: options.line_join == lyon::tessellation::LineJoin::Round,
+                };
+                built.outline = Some(Arc::new(Self::outline(&dashed, Some(stroke))));
+                Ok(built)
+            }
+            PathStyle::Fill(options) => {
+                let mut built = Self::tessellate_fill(&path, &options)?;
+                built.outline = Some(Arc::new(Self::outline(&path, None)));
+                Ok(built)
+            }
         }
+    }
+
+    /// The contours of `path`, as a [`PathOutline`].
+    fn outline(path: &lyon::path::Path, stroke: Option<OutlineStroke>) -> PathOutline {
+        use lyon::path::Event;
+        let p = |q: lyon::math::Point| point(px(q.x), px(q.y));
+        let mut verbs = Vec::new();
+        for event in path.iter() {
+            match event {
+                Event::Begin { at } => verbs.push(OutlineVerb::MoveTo(p(at))),
+                Event::Line { to, .. } => verbs.push(OutlineVerb::LineTo(p(to))),
+                Event::Quadratic { ctrl, to, .. } => verbs.push(OutlineVerb::QuadTo(p(ctrl), p(to))),
+                Event::Cubic { ctrl1, ctrl2, to, .. } => verbs.push(OutlineVerb::CubicTo(p(ctrl1), p(ctrl2), p(to))),
+                Event::End { close, .. } => {
+                    if close {
+                        verbs.push(OutlineVerb::Close)
+                    }
+                }
+            }
+        }
+        PathOutline { verbs, stroke }
+    }
+
+    /// `path` cut into dashes of `dash_array` (the path itself without one).
+    fn dashed(dash_array: Option<Vec<Pixels>>, path: &lyon::path::Path) -> lyon::path::Path {
+        let Some(dash_array) = dash_array else { return path.clone() };
+        let measurements = lyon::algorithms::measure::PathMeasurements::from_path(path, 0.01);
+        let mut sampler = measurements.create_sampler(path, lyon::algorithms::measure::SampleType::Normalized);
+        let mut builder = lyon::path::Path::builder();
+        let total_length = sampler.length();
+        let dash_array_len = dash_array.len();
+        let mut pos = 0.;
+        let mut dash_index = 0;
+        while pos < total_length {
+            let dash_length = dash_array[dash_index % dash_array_len].0;
+            let next_pos = (pos + dash_length).min(total_length);
+            if dash_index % 2 == 0 {
+                sampler.split_range(pos / total_length..next_pos / total_length, &mut builder);
+            }
+            pos = next_pos;
+            dash_index += 1;
+        }
+        builder.build()
     }
 
     fn tessellate_fill(
