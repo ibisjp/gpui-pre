@@ -1,6 +1,8 @@
 // Modified by ibis inc. for ibisOffice (2026-09-25): added `Window::paint_glyph_transformed`.
+// Modified by ibis inc. for ibisOffice (2026-09-29): added `Window::record_paints` and `Window::take_recorded_paints`.
 #[cfg(feature = "profiler")]
 use crate::DebugFrameOverlayMode;
+use crate::PaintRecord;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
 #[cfg(feature = "profiler")]
@@ -1172,6 +1174,9 @@ pub struct Window {
     /// This is used by `with_rem_size` to allow rendering an element tree with
     /// a given rem size.
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
+    /// What the frame being drawn paints, while recording (added in
+    /// ibisOffice's fork: see `record_paints`).
+    paint_record: Option<Vec<PaintRecord>>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
@@ -2023,6 +2028,7 @@ impl Window {
             handle,
             invalidator,
             removed: false,
+            paint_record: None,
             platform_window,
             display_id,
             is_resizable,
@@ -3263,7 +3269,37 @@ impl Window {
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
+    /// Record what each frame paints from now on, as drawing commands (see
+    /// [`PaintRecord`]), for exporting the window as vector graphics.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn record_paints(&mut self) {
+        self.paint_record = Some(Vec::new());
+    }
+
+    /// What the last frame drawn painted, and stop recording; `None` when not
+    /// recording.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn take_recorded_paints(&mut self) -> Option<Vec<PaintRecord>> {
+        self.paint_record.take()
+    }
+
+    fn record_paint(&mut self, record: impl FnOnce(Bounds<Pixels>) -> PaintRecord) {
+        if self.paint_record.is_some() {
+            let clip = self.content_mask().bounds;
+            let record = record(clip);
+            if let Some(list) = &mut self.paint_record {
+                list.push(record);
+            }
+        }
+    }
+
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        // A frame's record is its own.
+        if let Some(list) = &mut self.paint_record {
+            list.clear();
+        }
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -4400,6 +4436,15 @@ impl Window {
                 continue;
             }
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+            let (record_bounds, record_radii, record_color, record_blur) = (shadow_bounds, corner_radii, shadow.color.opacity(opacity), shadow.blur_radius);
+            self.record_paint(|clip| PaintRecord::Shadow {
+                bounds: record_bounds,
+                corner_radii: record_radii,
+                color: record_color,
+                blur_radius: record_blur,
+                inset: false,
+                clip,
+            });
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
@@ -4436,6 +4481,15 @@ impl Window {
                 continue;
             }
             let hole = (bounds + shadow.offset).dilate(-shadow.spread_radius);
+            let (record_bounds, record_radii, record_color, record_blur) = (hole, corner_radii, shadow.color.opacity(opacity), shadow.blur_radius);
+            self.record_paint(|clip| PaintRecord::Shadow {
+                bounds: record_bounds,
+                corner_radii: record_radii,
+                color: record_color,
+                blur_radius: record_blur,
+                inset: true,
+                clip,
+            });
             // Clamp at zero so a large spread can't produce negative radii, which would
             // break the SDF in the shader.
             let zero = Pixels::ZERO;
@@ -4512,6 +4566,15 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let opacity = self.element_opacity();
+        self.record_paint(|clip| PaintRecord::Quad {
+            bounds: quad.bounds,
+            clip,
+            background: quad.background.opacity(opacity),
+            border_color: quad.border_color.opacity(opacity),
+            border_widths: quad.border_widths,
+            corner_radii: quad.corner_radii,
+            border_style: quad.border_style,
+        });
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
         let quad = Quad {
@@ -4588,6 +4651,16 @@ impl Window {
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
+        self.record_paint(|clip| PaintRecord::Path {
+            outline: path.outline.clone(),
+            triangles: if path.outline.is_some() {
+                Vec::new()
+            } else {
+                path.vertices.chunks_exact(3).map(|t| [t[0].xy_position, t[1].xy_position, t[2].xy_position]).collect()
+            },
+            color: path.color,
+            clip,
+        });
         self.next_frame
             .scene
             .insert_primitive(path.scale(scale_factor));
@@ -4604,6 +4677,14 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
         let underline = self.underline(origin, width, style);
+        let opacity = self.element_opacity();
+        let bounds = Bounds { origin, size: size(width, style.thickness) };
+        self.record_paint(|clip| PaintRecord::Line {
+            bounds,
+            color: style.color.unwrap_or_default().opacity(opacity),
+            wavy: style.wavy,
+            clip,
+        });
         self.next_frame.scene.insert_primitive(underline);
     }
 
@@ -4617,6 +4698,13 @@ impl Window {
         style: &StrikethroughStyle,
     ) {
         self.invalidator.debug_assert_paint();
+        let opacity = self.element_opacity();
+        self.record_paint(|clip| PaintRecord::Line {
+            bounds: Bounds { origin, size: size(width, style.thickness) },
+            color: style.color.unwrap_or_default().opacity(opacity),
+            wavy: false,
+            clip,
+        });
 
         let scale_factor = self.scale_factor();
         let height = style.thickness;
@@ -4686,6 +4774,16 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
+        self.record_paint(|clip| PaintRecord::Glyph {
+            origin,
+            font_id,
+            glyph_id,
+            font_size,
+            color: color.opacity(element_opacity),
+            transformation,
+            emoji: false,
+            clip,
+        });
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
 
@@ -4789,6 +4887,17 @@ impl Window {
         font_size: Pixels,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
+        let opacity = self.element_opacity();
+        self.record_paint(|clip| PaintRecord::Glyph {
+            origin,
+            font_id,
+            glyph_id,
+            font_size,
+            color: crate::black().opacity(opacity),
+            transformation: None,
+            emoji: true,
+            clip,
+        });
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
@@ -4926,6 +5035,16 @@ impl Window {
         if image_bounds.size.width <= Pixels::ZERO || image_bounds.size.height <= Pixels::ZERO {
             return Ok(());
         }
+        let opacity = self.element_opacity();
+        self.record_paint(|clip| PaintRecord::Image {
+            bounds: image_bounds,
+            clip: clip.intersect(&bounds),
+            corner_radii,
+            image: data.clone(),
+            frame_index,
+            grayscale,
+            opacity,
+        });
 
         let params = RenderImageParams {
             image_id: data.id,

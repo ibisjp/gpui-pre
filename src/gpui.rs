@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-09-29): added the `paint_record` module.
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
@@ -31,6 +32,7 @@ mod inspector;
 mod interactive;
 mod key_dispatch;
 mod keymap;
+mod paint_record;
 mod path_builder;
 mod platform;
 pub mod prelude;
@@ -147,6 +149,7 @@ pub use profiler::*;
 #[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
+pub use paint_record::*;
 pub use scene::*;
 pub use shared_uri::*;
 use std::{any::Any, future::Future};

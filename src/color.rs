@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-09-29): added `Background::as_linear_gradient`.
 use anyhow::{Context as _, bail};
 use schemars::{JsonSchema, json_schema};
 use serde::{
@@ -915,6 +916,14 @@ impl Background {
         } else {
             None
         }
+    }
+
+    /// The angle (in degrees) and the two stops of a linear gradient, or
+    /// `None` for another kind of background.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn as_linear_gradient(&self) -> Option<(f32, [LinearColorStop; 2])> {
+        (self.tag == BackgroundTag::LinearGradient).then_some((self.gradient_angle_or_pattern_height, self.colors))
     }
 
     /// Use specified color space for color interpolation.
