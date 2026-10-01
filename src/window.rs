@@ -1,6 +1,7 @@
 // Modified by ibis inc. for ibisOffice (2026-09-25): added `Window::paint_glyph_transformed`.
 // Modified by ibis inc. for ibisOffice (2026-09-29): added `Window::record_paints` and `Window::take_recorded_paints`.
 // Modified by ibis inc. for ibisOffice (2026-09-30): added `Window::record_paints_only` (recording without drawing).
+// Modified by ibis inc. for ibisOffice (2026-10-01): `Window::paint_path` composites the path over the whole device pixels around it (its partly covered edge pixels were cut off).
 #[cfg(feature = "profiler")]
 use crate::DebugFrameOverlayMode;
 use crate::PaintRecord;
@@ -4692,9 +4693,23 @@ impl Window {
         if self.paint_record_only {
             return;
         }
-        self.next_frame
-            .scene
-            .insert_primitive(path.scale(scale_factor));
+        let mut scaled = path.scale(scale_factor);
+        // The path is rasterized (anti-aliased) into an intermediate texture
+        // and then copied onto the frame through a rectangle of its bounds:
+        // a rectangle with fractional edges covers only the pixels whose
+        // centres it contains, cutting off the partly covered pixels along
+        // the path's level and upright edges. Its bounds go out to whole
+        // device pixels, so those pixels are copied too (the coverage itself
+        // comes from the path).
+        let left = scaled.bounds.origin.x.0.floor();
+        let top = scaled.bounds.origin.y.0.floor();
+        let right = (scaled.bounds.origin.x.0 + scaled.bounds.size.width.0).ceil();
+        let bottom = (scaled.bounds.origin.y.0 + scaled.bounds.size.height.0).ceil();
+        scaled.bounds = Bounds::new(
+            point(ScaledPixels(left), ScaledPixels(top)),
+            size(ScaledPixels(right - left), ScaledPixels(bottom - top)),
+        );
+        self.next_frame.scene.insert_primitive(scaled);
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
