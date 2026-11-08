@@ -57,6 +57,8 @@ pub struct Scene {
     pub surfaces: Vec<PaintSurface>,
     /// Textures drawn with a 3D transform (see [`TexturedQuad`]).
     pub textured_quads: Vec<TexturedQuad>,
+    /// Textures drawn on a triangle mesh with a 3D transform (see [`TexturedMesh`]).
+    pub textured_meshes: Vec<TexturedMesh>,
     /// Passes drawn to textures before the scene itself, in the order they were painted (see [`OffscreenPass`]).
     pub offscreens: Vec<OffscreenPass>,
     current_offscreen: Option<(usize, Point<ScaledPixels>)>,
@@ -66,6 +68,7 @@ pub struct Scene {
 impl Scene {
     pub fn clear(&mut self) {
         self.textured_quads.clear();
+        self.textured_meshes.clear();
         self.offscreens.clear();
         self.current_offscreen = None;
         self.paint_operations.clear();
@@ -219,6 +222,10 @@ impl Scene {
                 quad.order = order;
                 self.textured_quads.push(*quad);
             }
+            Primitive::TexturedMesh(mesh) => {
+                mesh.order = order;
+                self.textured_meshes.push(mesh.clone());
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -291,6 +298,7 @@ impl Scene {
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
         self.textured_quads.sort_by_key(|quad| quad.order);
+        self.textured_meshes.sort_by_key(|mesh| mesh.order);
         for pass in &mut self.offscreens {
             pass.scene.finish();
         }
@@ -321,6 +329,8 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            textured_meshes_start: 0,
+            textured_meshes_iter: self.textured_meshes.iter().peekable(),
             textured_quads_start: 0,
             textured_quads_iter: self.textured_quads.iter().peekable(),
         }
@@ -366,6 +376,7 @@ pub(crate) enum PrimitiveKind {
     PolychromeSprite,
     Surface,
     TexturedQuad,
+    TexturedMesh,
 }
 
 pub(crate) enum PaintOperation {
@@ -392,6 +403,7 @@ pub enum Primitive {
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
     TexturedQuad(TexturedQuad),
+    TexturedMesh(TexturedMesh),
 }
 
 #[expect(missing_docs)]
@@ -407,6 +419,7 @@ impl Primitive {
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
             Primitive::TexturedQuad(quad) => &quad.screen_bounds,
+            Primitive::TexturedMesh(mesh) => &mesh.screen_bounds,
         }
     }
 
@@ -421,6 +434,7 @@ impl Primitive {
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
             Primitive::TexturedQuad(quad) => &quad.content_mask,
+            Primitive::TexturedMesh(mesh) => &mesh.content_mask,
         }
     }
 
@@ -671,6 +685,27 @@ impl Primitive {
                     screen_bounds: scale_bounds(q.screen_bounds),
                 })
             }
+            Primitive::TexturedMesh(m) => {
+                let content_mask = scale_mask(&m.content_mask);
+                if content_mask.bounds.is_empty() {
+                    return None;
+                }
+                let on_screen = Transform3D::translate(-origin.x.0, -origin.y.0, 0.)
+                    .then(Transform3D::scale(scale, scale, 1.))
+                    .then(Transform3D::translate(origin.x.0 + offset.0, origin.y.0 + offset.1, 0.));
+                Primitive::TexturedMesh(TexturedMesh {
+                    order: 0,
+                    texture: m.texture,
+                    opacity: m.opacity,
+                    flags: m.flags,
+                    shade: m.shade,
+                    content_mask,
+                    transform: Transform3D { m: m.transform }.then(on_screen).m,
+                    screen_bounds: scale_bounds(m.screen_bounds),
+                    vertices: m.vertices.clone(),
+                    indices: m.indices.clone(),
+                })
+            }
         };
         Some(out)
     }
@@ -700,6 +735,8 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    textured_meshes_start: usize,
+    textured_meshes_iter: Peekable<slice::Iter<'a, TexturedMesh>>,
     textured_quads_start: usize,
     textured_quads_iter: Peekable<slice::Iter<'a, TexturedQuad>>,
 }
@@ -738,6 +775,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.textured_quads_iter.peek().map(|s| s.order),
                 PrimitiveKind::TexturedQuad,
+            ),
+            (
+                self.textured_meshes_iter.peek().map(|s| s.order),
+                PrimitiveKind::TexturedMesh,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -884,6 +925,20 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            PrimitiveKind::TexturedMesh => {
+                let start = self.textured_meshes_start;
+                let mut end = start + 1;
+                self.textured_meshes_iter.next();
+                while self
+                    .textured_meshes_iter
+                    .next_if(|mesh| (mesh.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    end += 1;
+                }
+                self.textured_meshes_start = end;
+                Some(PrimitiveBatch::TexturedMeshes(start..end))
+            }
             PrimitiveKind::TexturedQuad => {
                 let start = self.textured_quads_start;
                 let mut end = start + 1;
@@ -931,6 +986,7 @@ pub enum PrimitiveBatch {
     },
     Surfaces(Range<usize>),
     TexturedQuads(Range<usize>),
+    TexturedMeshes(Range<usize>),
 }
 
 impl PrimitiveBatch {
@@ -964,6 +1020,7 @@ impl PrimitiveBatch {
             }
             Self::Surfaces(range) => format!("surfaces ({})", range.len()),
             Self::TexturedQuads(range) => format!("textured quads ({})", range.len()),
+            Self::TexturedMeshes(range) => format!("textured meshes ({})", range.len()),
         }
     }
 }
@@ -1272,6 +1329,53 @@ pub struct TexturedQuad {
 impl TexturedQuad {
     /// Do not draw the face that turns its back to the viewer.
     pub const CULL_BACK: u32 = 1;
+}
+
+/// A vertex of a [`TexturedMesh`]: a point (x, y, z) in device pixels of the mesh's plane space (the same space the mesh's transform
+/// takes, as for [`TexturedQuad::bounds`]) and the point of the texture (u, v in 0..1) drawn there. 32 bytes, read by the GPU as it is.
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct MeshVertex {
+    pub position: [f32; 3],
+    pub pad0: f32,
+    pub uv: [f32; 2],
+    pub pad1: [f32; 2],
+}
+
+impl MeshVertex {
+    /// A vertex at `position` showing the texture's point `uv`.
+    pub fn new(position: [f32; 3], uv: [f32; 2]) -> Self {
+        Self { position, pad0: 0., uv, pad1: [0.; 2] }
+    }
+}
+
+/// An offscreen texture drawn on a triangle mesh (curved or folded surfaces: a page curling, a cloth), the mesh placed in 3D by
+/// `transform` as for [`TexturedQuad`]. The triangles are `indices` (three per triangle, clockwise on the screen is the front (the corners top left, top right, bottom left of a quad are)),
+/// the front face being the one drawn when `flags` has [`TexturedQuad::CULL_BACK`].
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6.
+#[derive(Clone, Debug)]
+#[allow(missing_docs)]
+pub struct TexturedMesh {
+    pub order: DrawOrder,
+    pub texture: OffscreenId,
+    pub opacity: f32,
+    pub flags: u32,
+    pub shade: f32,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub transform: [f32; 16],
+    pub screen_bounds: Bounds<ScaledPixels>,
+    pub vertices: Arc<Vec<MeshVertex>>,
+    pub indices: Arc<Vec<u32>>,
+}
+
+impl From<TexturedMesh> for Primitive {
+    fn from(mesh: TexturedMesh) -> Self {
+        Primitive::TexturedMesh(mesh)
+    }
 }
 
 impl From<TexturedQuad> for Primitive {

@@ -5389,6 +5389,77 @@ impl Window {
         });
     }
 
+    /// Paints the offscreen texture `id` on a triangle mesh: `vertices` (positions (x, y, z) in logical pixels of the plane the
+    /// `transform` takes, as for [`Window::paint_textured_quad`], and the texture points `uv` in 0..1) and `indices` (three per triangle,
+    /// clockwise on the screen is the front (the corners top left, top right, bottom left of a quad are) face). `transform`, `opacity`, `shade` and `cull_back` are as for
+    /// [`Window::paint_textured_quad`]. Draw several meshes (and quads) from back to front.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn paint_textured_mesh(
+        &mut self,
+        id: crate::OffscreenId,
+        vertices: &[crate::MeshVertex],
+        indices: &[u32],
+        transform: crate::Transform3D,
+        opacity: f32,
+        shade: f32,
+        cull_back: bool,
+    ) {
+        self.invalidator.debug_assert_paint();
+        if self.paint_record_only || vertices.is_empty() || indices.len() < 3 {
+            return;
+        }
+        let scale = self.scale_factor();
+        let content_mask = self.snapped_content_mask();
+        let transform = transform.to_device(scale);
+        let device: Vec<crate::MeshVertex> = vertices
+            .iter()
+            .map(|v| {
+                crate::MeshVertex::new(
+                    [v.position[0] * scale, v.position[1] * scale, v.position[2] * scale],
+                    v.uv,
+                )
+            })
+            .collect();
+        // The box the mesh covers on the screen; with a vertex behind the eye, the whole mask.
+        let (mut min_x, mut min_y, mut max_x, mut max_y) = (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut behind = false;
+        for v in &device {
+            match transform.project(v.position[0], v.position[1], v.position[2]) {
+                Some((x, y)) if x.is_finite() && y.is_finite() => {
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                    min_y = min_y.min(y);
+                    max_y = max_y.max(y);
+                }
+                _ => behind = true,
+            }
+        }
+        let screen_bounds = if behind || !min_x.is_finite() {
+            content_mask.bounds
+        } else {
+            Bounds::from_corners(
+                point(ScaledPixels(min_x.floor()), ScaledPixels(min_y.floor())),
+                point(ScaledPixels(max_x.ceil()), ScaledPixels(max_y.ceil())),
+            )
+        };
+        let opacity = self.element_opacity() * opacity;
+        self.next_frame.scene.insert_primitive(crate::TexturedMesh {
+            order: 0,
+            texture: id,
+            opacity,
+            flags: if cull_back { crate::TexturedQuad::CULL_BACK } else { 0 },
+            shade,
+            content_mask,
+            transform: transform.m,
+            screen_bounds,
+            vertices: std::sync::Arc::new(device),
+            indices: std::sync::Arc::new(indices.to_vec()),
+        });
+    }
+
     /// Removes an image from the sprite atlas.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
         for frame_index in 0..data.frame_count() {
