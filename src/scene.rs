@@ -662,6 +662,8 @@ impl Primitive {
                     texture: q.texture,
                     opacity: q.opacity,
                     flags: q.flags,
+                    shade: q.shade,
+                    pad: [0; 3],
                     bounds: q.bounds,
                     content_mask,
                     uv: q.uv,
@@ -1241,7 +1243,7 @@ pub struct OffscreenPass {
 /// interpolated with perspective. A part of the rectangle at or behind the eye (w <= 0) is cut away. Drawn like the
 /// other primitives in the order of painting, so a scene of several quads is drawn back to front by the caller.
 ///
-/// This struct is read by the GPU as it is (128 bytes, then `screen_bounds`).
+/// This struct is read by the GPU as it is (144 bytes, then `screen_bounds`).
 ///
 /// Added in ibisOffice's fork of gpui-pre 0.3.6.
 #[derive(Clone, Copy, Debug)]
@@ -1253,6 +1255,10 @@ pub struct TexturedQuad {
     pub opacity: f32,
     /// Bit 0 ([`TexturedQuad::CULL_BACK`]): do not draw the face that turns its back to the viewer.
     pub flags: u32,
+    /// A multiplier of the colors (not the alpha): 1 leaves them, less darkens (a face turned away from the light).
+    pub shade: f32,
+    #[doc(hidden)]
+    pub pad: [u32; 3],
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     /// The part of the texture drawn: (left, top, width, height) in 0..1 of the texture.

@@ -5317,7 +5317,7 @@ impl Window {
     /// pass the `bounds` the texture was painted with to draw it at its own size), placed by `transform` in 3D
     /// (see [`Transform3D`]: points are (x, y, z) in logical pixels of the window, and a perspective is part of the
     /// transform, built about the point the picture turns around with [`Transform3D::about`]). `opacity` multiplies the
-    /// texture's own, `uv` is the part of the texture drawn as (left, top, width, height) in 0..1, and `cull_back` leaves
+    /// texture's own, `shade` its colors (1: as they are; less darkens, a face turned from the light), `uv` is the part of the texture drawn as (left, top, width, height) in 0..1, and `cull_back` leaves
     /// out the face that turns its back to the viewer (a card seen from behind, a cube's far side). The quad is drawn at
     /// the current z-index, in the order of painting, so draw several of them from back to front. A texture that was
     /// not painted in this frame draws nothing.
@@ -5331,6 +5331,7 @@ impl Window {
         bounds: Bounds<Pixels>,
         transform: crate::Transform3D,
         opacity: f32,
+        shade: f32,
         uv: [f32; 4],
         cull_back: bool,
     ) {
@@ -5378,6 +5379,8 @@ impl Window {
             } else {
                 0
             },
+            shade,
+            pad: [0; 3],
             bounds: device,
             content_mask,
             uv,
