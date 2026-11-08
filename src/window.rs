@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-11-08): added `Window::paint_offscreen` and `Window::paint_textured_quad`.
 // Modified by ibis inc. (2026-10-26): honor interceptor propagation stops before low-level key listeners.
 // Modified by ibis inc. for ibisOffice (2026-09-25): added `Window::paint_glyph_transformed`.
 // Modified by ibis inc. for ibisOffice (2026-09-29): added `Window::record_paints` and `Window::take_recorded_paints`.
@@ -5252,6 +5253,136 @@ impl Window {
             bounds,
             content_mask,
             image_buffer,
+        });
+    }
+
+    /// Paints what `f` paints into an offscreen texture instead of the window (a framebuffer object), named `id`.
+    /// The texture covers `bounds` (logical pixels of the window; at the window's scale factor, with the edges rounded
+    /// outward to whole device pixels) and starts empty (transparent). What `f` paints is clipped to `bounds` and keeps
+    /// its window coordinates, so an element laid out at `bounds` is painted in place, only not on the screen.
+    /// Draw the texture, from this frame, with [`Window::paint_textured_quad`] (before or after: all offscreen passes
+    /// of a frame are drawn before the window).
+    ///
+    /// An id painted again in the same frame replaces the earlier pass, and a texture lives for one frame only: paint
+    /// it again in every frame that draws it. The texture is at most as big as the window's drawable (a larger one is
+    /// cut). Passes do not nest (an offscreen painted inside another one is painted into the outer one). A view
+    /// painted from the cache inside `f` is replayed as it was painted before, so it is not recorded again; give the
+    /// pass uncached elements.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn paint_offscreen<R>(
+        &mut self,
+        id: crate::OffscreenId,
+        bounds: Bounds<Pixels>,
+        f: impl FnOnce(&mut Window) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint();
+        if self.paint_record_only || self.next_frame.scene.in_offscreen() {
+            return f(self);
+        }
+        let region = self.cover_bounds(bounds);
+        let size = crate::size(
+            crate::DevicePixels(region.size.width.0.round().max(1.0) as i32),
+            crate::DevicePixels(region.size.height.0.round().max(1.0) as i32),
+        );
+        self.next_frame
+            .scene
+            .begin_offscreen(id, size, region.origin);
+        let mask = ContentMask {
+            bounds: Bounds::from_corners(
+                point(
+                    Pixels(region.origin.x.0 / self.scale_factor()),
+                    Pixels(region.origin.y.0 / self.scale_factor()),
+                ),
+                point(
+                    Pixels((region.origin.x.0 + region.size.width.0) / self.scale_factor()),
+                    Pixels((region.origin.y.0 + region.size.height.0) / self.scale_factor()),
+                ),
+            ),
+        };
+        // The mask replaces the stack's (the pass is not clipped by the elements around it) and the pass starts at
+        // full opacity; both are put back after.
+        let saved_masks = std::mem::replace(&mut self.content_mask_stack, vec![mask]);
+        let saved_opacity = std::mem::replace(&mut self.element_opacity, 1.0);
+        let result = f(self);
+        self.element_opacity = saved_opacity;
+        self.content_mask_stack = saved_masks;
+        self.next_frame.scene.end_offscreen();
+        result
+    }
+
+    /// Paints the offscreen texture `id` (see [`Window::paint_offscreen`]) as the rectangle `bounds` (logical pixels;
+    /// pass the `bounds` the texture was painted with to draw it at its own size), placed by `transform` in 3D
+    /// (see [`Transform3D`]: points are (x, y, z) in logical pixels of the window, and a perspective is part of the
+    /// transform, built about the point the picture turns around with [`Transform3D::about`]). `opacity` multiplies the
+    /// texture's own, `uv` is the part of the texture drawn as (left, top, width, height) in 0..1, and `cull_back` leaves
+    /// out the face that turns its back to the viewer (a card seen from behind, a cube's far side). The quad is drawn at
+    /// the current z-index, in the order of painting, so draw several of them from back to front. A texture that was
+    /// not painted in this frame draws nothing.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn paint_textured_quad(
+        &mut self,
+        id: crate::OffscreenId,
+        bounds: Bounds<Pixels>,
+        transform: crate::Transform3D,
+        opacity: f32,
+        uv: [f32; 4],
+        cull_back: bool,
+    ) {
+        self.invalidator.debug_assert_paint();
+        if self.paint_record_only {
+            return;
+        }
+        let device = self.cover_bounds(bounds);
+        let content_mask = self.snapped_content_mask();
+        let transform = transform.to_device(self.scale_factor());
+        let corners = [
+            (device.origin.x.0, device.origin.y.0),
+            (device.origin.x.0 + device.size.width.0, device.origin.y.0),
+            (device.origin.x.0, device.origin.y.0 + device.size.height.0),
+            (
+                device.origin.x.0 + device.size.width.0,
+                device.origin.y.0 + device.size.height.0,
+            ),
+        ];
+        // The box the quad covers on the screen; with a corner behind the eye, the whole mask.
+        let projected: Option<Vec<(f32, f32)>> = corners
+            .iter()
+            .map(|(x, y)| transform.project(*x, *y, 0.))
+            .collect();
+        let screen_bounds = match projected {
+            Some(points) if points.iter().all(|(x, y)| x.is_finite() && y.is_finite()) => {
+                let min_x = points.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
+                let max_x = points.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
+                let min_y = points.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
+                let max_y = points.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
+                Bounds::from_corners(
+                    point(ScaledPixels(min_x.floor()), ScaledPixels(min_y.floor())),
+                    point(ScaledPixels(max_x.ceil()), ScaledPixels(max_y.ceil())),
+                )
+            }
+            _ => content_mask.bounds,
+        };
+        let opacity = self.element_opacity() * opacity;
+        self.next_frame.scene.insert_primitive(crate::TexturedQuad {
+            order: 0,
+            texture: id,
+            opacity,
+            flags: if cull_back {
+                crate::TexturedQuad::CULL_BACK
+            } else {
+                0
+            },
+            bounds: device,
+            content_mask,
+            uv,
+            transform: transform.m,
+            screen_bounds,
         });
     }
 

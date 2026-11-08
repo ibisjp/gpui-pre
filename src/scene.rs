@@ -1,6 +1,7 @@
 // Modified by ibis inc. for ibisOffice (2026-09-29): a `Path` keeps the outline it was tessellated from (`Path::outline`).
 // Modified by ibis inc. for ibisOffice (2026-10-18): added `SceneSnapshot`, `Scene::snapshot_bounds`, and `Scene::replay_scaled`.
 // Modified by ibis inc. for ibisOffice (2026-10-21): added `OutlineDash` and `OutlineStroke::dash` (a stroked outline keeps its dash pattern for a PDF).
+// Modified by ibis inc. for ibisOffice (2026-11-08): offscreen passes (`Scene::begin_offscreen`) and `TexturedQuad`, a texture drawn with a 3D transform.
 // todo("windows"): remove
 #![cfg_attr(windows, allow(dead_code))]
 
@@ -8,8 +9,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, DevicePixels, Edges, Hsla,
+    Pixels, Point, Radians, ScaledPixels, Size, Transform3D, bounds_tree::BoundsTree, point,
 };
 use std::sync::Arc;
 use std::{
@@ -54,11 +55,19 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    /// Textures drawn with a 3D transform (see [`TexturedQuad`]).
+    pub textured_quads: Vec<TexturedQuad>,
+    /// Passes drawn to textures before the scene itself, in the order they were painted (see [`OffscreenPass`]).
+    pub offscreens: Vec<OffscreenPass>,
+    current_offscreen: Option<(usize, Point<ScaledPixels>)>,
 }
 
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
+        self.textured_quads.clear();
+        self.offscreens.clear();
+        self.current_offscreen = None;
         self.paint_operations.clear();
         self.primitive_bounds.clear();
         self.layer_stack.clear();
@@ -77,6 +86,16 @@ impl Scene {
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
+        if let Some((index, origin)) = self.current_offscreen {
+            let moved = Bounds {
+                origin: point(bounds.origin.x - origin.x, bounds.origin.y - origin.y),
+                size: bounds.size,
+            };
+            self.offscreens[index].scene.push_layer(moved);
+            self.paint_operations
+                .push(PaintOperation::StartLayer(bounds));
+            return;
+        }
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
         self.paint_operations
@@ -84,8 +103,56 @@ impl Scene {
     }
 
     pub fn pop_layer(&mut self) {
+        if let Some((index, _)) = self.current_offscreen {
+            self.offscreens[index].scene.pop_layer();
+            self.paint_operations.push(PaintOperation::EndLayer);
+            return;
+        }
         self.layer_stack.pop();
         self.paint_operations.push(PaintOperation::EndLayer);
+    }
+
+    /// Starts painting into an offscreen texture of `size` device pixels: until [`Scene::end_offscreen`], primitives
+    /// (given in window coordinates) are drawn to the texture, with `origin` (device pixels of the window) at its top
+    /// left. A pass with the same `id` painted earlier in this frame is replaced. Passes do not nest.
+    pub fn begin_offscreen(
+        &mut self,
+        id: OffscreenId,
+        size: Size<DevicePixels>,
+        origin: Point<ScaledPixels>,
+    ) {
+        debug_assert!(self.current_offscreen.is_none(), "offscreen passes do not nest");
+        self.paint_operations
+            .push(PaintOperation::StartOffscreen { id, size, origin });
+        if self.current_offscreen.is_some() {
+            return;
+        }
+        let index = match self.offscreens.iter().position(|pass| pass.id == id) {
+            Some(index) => {
+                self.offscreens[index].size = size;
+                self.offscreens[index].scene.clear();
+                index
+            }
+            None => {
+                self.offscreens.push(OffscreenPass {
+                    id,
+                    size,
+                    scene: Scene::default(),
+                });
+                self.offscreens.len() - 1
+            }
+        };
+        self.current_offscreen = Some((index, origin));
+    }
+
+    /// Whether painting goes to an offscreen pass now.
+    pub fn in_offscreen(&self) -> bool {
+        self.current_offscreen.is_some()
+    }
+
+    pub fn end_offscreen(&mut self) {
+        self.paint_operations.push(PaintOperation::EndOffscreen);
+        self.current_offscreen = None;
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
@@ -95,6 +162,17 @@ impl Scene {
             .intersect(&primitive.content_mask().bounds);
 
         if clipped_bounds.is_empty() {
+            return;
+        }
+
+        if let Some((index, origin)) = self.current_offscreen {
+            // The pass has its own coordinates (its origin at the texture's top left); the scene keeps the
+            // operation as given so that a replay of it moves it the same way.
+            if let Some(moved) = primitive.moved_by(-origin.x.0, -origin.y.0) {
+                self.offscreens[index].scene.insert_primitive(moved);
+            }
+            self.paint_operations
+                .push(PaintOperation::Primitive(primitive));
             return;
         }
 
@@ -137,6 +215,10 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            Primitive::TexturedQuad(quad) => {
+                quad.order = order;
+                self.textured_quads.push(*quad);
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -148,6 +230,10 @@ impl Scene {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::StartOffscreen { id, size, origin } => {
+                    self.begin_offscreen(*id, *size, *origin)
+                }
+                PaintOperation::EndOffscreen => self.end_offscreen(),
             }
         }
     }
@@ -204,6 +290,10 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.textured_quads.sort_by_key(|quad| quad.order);
+        for pass in &mut self.offscreens {
+            pass.scene.finish();
+        }
     }
 
     #[cfg_attr(
@@ -231,6 +321,8 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            textured_quads_start: 0,
+            textured_quads_iter: self.textured_quads.iter().peekable(),
         }
     }
 }
@@ -273,12 +365,19 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
+    TexturedQuad,
 }
 
 pub(crate) enum PaintOperation {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,
+    StartOffscreen {
+        id: OffscreenId,
+        size: Size<DevicePixels>,
+        origin: Point<ScaledPixels>,
+    },
+    EndOffscreen,
 }
 
 #[derive(Clone)]
@@ -292,6 +391,7 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    TexturedQuad(TexturedQuad),
 }
 
 #[expect(missing_docs)]
@@ -306,6 +406,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            Primitive::TexturedQuad(quad) => &quad.screen_bounds,
         }
     }
 
@@ -319,6 +420,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::TexturedQuad(quad) => &quad.content_mask,
         }
     }
 
@@ -328,10 +430,34 @@ impl Primitive {
         scale: f32,
         clip: Bounds<ScaledPixels>,
     ) -> Option<Primitive> {
+        self.transform_around(origin, scale, (0., 0.), clip)
+    }
+
+    /// The primitive moved by (dx, dy) device pixels (for the coordinates of an offscreen pass).
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn moved_by(&self, dx: f32, dy: f32) -> Option<Primitive> {
+        let everywhere = Bounds {
+            origin: point(ScaledPixels(-1.0e7), ScaledPixels(-1.0e7)),
+            size: Size {
+                width: ScaledPixels(2.0e7),
+                height: ScaledPixels(2.0e7),
+            },
+        };
+        self.transform_around(point(ScaledPixels(0.), ScaledPixels(0.)), 1., (dx, dy), everywhere)
+    }
+
+    fn transform_around(
+        &self,
+        origin: Point<ScaledPixels>,
+        scale: f32,
+        offset: (f32, f32),
+        clip: Bounds<ScaledPixels>,
+    ) -> Option<Primitive> {
         let scale_pt = |p: Point<ScaledPixels>| -> Point<ScaledPixels> {
             Point::new(
-                ScaledPixels(origin.x.0 + (p.x.0 - origin.x.0) * scale),
-                ScaledPixels(origin.y.0 + (p.y.0 - origin.y.0) * scale),
+                ScaledPixels(origin.x.0 + (p.x.0 - origin.x.0) * scale + offset.0),
+                ScaledPixels(origin.y.0 + (p.y.0 - origin.y.0) * scale + offset.1),
             )
         };
         let scale_sz = |s: Size<ScaledPixels>| -> Size<ScaledPixels> {
@@ -380,8 +506,8 @@ impl Primitive {
             TransformationMatrix {
                 rotation_scale: r,
                 translation: [
-                    ox - rx + scale * (t[0] - ox + rx),
-                    oy - ry + scale * (t[1] - oy + ry),
+                    ox - rx + scale * (t[0] - ox + rx) + offset.0,
+                    oy - ry + scale * (t[1] - oy + ry) + offset.1,
                 ],
             }
         };
@@ -521,6 +647,28 @@ impl Primitive {
                     image_buffer: s.image_buffer.clone(),
                 })
             }
+            Primitive::TexturedQuad(q) => {
+                let content_mask = scale_mask(&q.content_mask);
+                if content_mask.bounds.is_empty() {
+                    return None;
+                }
+                // The whole picture is moved and scaled on the screen: A(p) = origin + (p - origin) * scale + offset
+                // is applied after the quad's own transform.
+                let on_screen = Transform3D::translate(-origin.x.0, -origin.y.0, 0.)
+                    .then(Transform3D::scale(scale, scale, 1.))
+                    .then(Transform3D::translate(origin.x.0 + offset.0, origin.y.0 + offset.1, 0.));
+                Primitive::TexturedQuad(TexturedQuad {
+                    order: 0,
+                    texture: q.texture,
+                    opacity: q.opacity,
+                    flags: q.flags,
+                    bounds: q.bounds,
+                    content_mask,
+                    uv: q.uv,
+                    transform: Transform3D { m: q.transform }.then(on_screen).m,
+                    screen_bounds: scale_bounds(q.screen_bounds),
+                })
+            }
         };
         Some(out)
     }
@@ -550,6 +698,8 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    textured_quads_start: usize,
+    textured_quads_iter: Peekable<slice::Iter<'a, TexturedQuad>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -582,6 +732,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            (
+                self.textured_quads_iter.peek().map(|s| s.order),
+                PrimitiveKind::TexturedQuad,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -728,6 +882,20 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            PrimitiveKind::TexturedQuad => {
+                let start = self.textured_quads_start;
+                let mut end = start + 1;
+                self.textured_quads_iter.next();
+                while self
+                    .textured_quads_iter
+                    .next_if(|quad| (quad.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    end += 1;
+                }
+                self.textured_quads_start = end;
+                Some(PrimitiveBatch::TexturedQuads(start..end))
+            }
         }
     }
 }
@@ -760,6 +928,7 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    TexturedQuads(Range<usize>),
 }
 
 impl PrimitiveBatch {
@@ -792,6 +961,7 @@ impl PrimitiveBatch {
                 )
             }
             Self::Surfaces(range) => format!("surfaces ({})", range.len()),
+            Self::TexturedQuads(range) => format!("textured quads ({})", range.len()),
         }
     }
 }
@@ -1043,6 +1213,64 @@ pub struct PaintSurface {
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+/// The name of an offscreen texture (see `Window::paint_offscreen`), chosen by the caller.
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct OffscreenId(pub u32);
+
+/// A pass drawn to a texture before the scene it belongs to is drawn. Its primitives are in the texture's own
+/// coordinates (device pixels, the origin at its top left).
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6.
+#[allow(missing_docs)]
+pub struct OffscreenPass {
+    pub id: OffscreenId,
+    pub size: Size<DevicePixels>,
+    pub scene: Scene,
+}
+
+/// An offscreen texture drawn as a rectangle that a 4x4 transform places in 3D, with an opacity.
+///
+/// The rectangle `bounds` (on the plane z = 0, in device pixels) is mapped by `transform` to homogeneous screen
+/// coordinates (x, y, z, w), in device pixels of the window: the screen position is (x / w, y / w), and the texture is
+/// interpolated with perspective. A part of the rectangle at or behind the eye (w <= 0) is cut away. Drawn like the
+/// other primitives in the order of painting, so a scene of several quads is drawn back to front by the caller.
+///
+/// This struct is read by the GPU as it is (128 bytes, then `screen_bounds`).
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct TexturedQuad {
+    pub order: DrawOrder,
+    pub texture: OffscreenId,
+    pub opacity: f32,
+    /// Bit 0 ([`TexturedQuad::CULL_BACK`]): do not draw the face that turns its back to the viewer.
+    pub flags: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    /// The part of the texture drawn: (left, top, width, height) in 0..1 of the texture.
+    pub uv: [f32; 4],
+    /// Column-major.
+    pub transform: [f32; 16],
+    /// The box that holds the drawn quad on the screen (to place it in the order of drawing).
+    pub screen_bounds: Bounds<ScaledPixels>,
+}
+
+impl TexturedQuad {
+    /// Do not draw the face that turns its back to the viewer.
+    pub const CULL_BACK: u32 = 1;
+}
+
+impl From<TexturedQuad> for Primitive {
+    fn from(quad: TexturedQuad) -> Self {
+        Primitive::TexturedQuad(quad)
     }
 }
 
