@@ -1,5 +1,5 @@
 use crate::{
-    App, Bounds, ClipboardItem, Context, Entity, InputHandler, Pixels, TextInputConfiguration,
+    App, Bounds, ClipboardItem, Context, Entity, ImeClause, InputHandler, Pixels, TextInputConfiguration,
     UTF16Selection, Window,
 };
 use std::ops::Range;
