@@ -1783,6 +1783,17 @@ impl PlatformInputHandler {
             .ok();
     }
 
+    /// Modified by ibis inc.: see [`InputHandler::set_ime_target_range`].
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos")),
+        allow(dead_code)
+    )]
+    pub fn set_ime_target_range(&mut self, target: Option<Range<usize>>) {
+        self.cx
+            .update(|window, cx| self.handler.set_ime_target_range(target, window, cx))
+            .ok();
+    }
+
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     pub fn unmark_text(&mut self) {
         self.cx
@@ -2014,6 +2025,19 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     );
+
+    /// Modified by ibis inc.: the clause of the marked text the input method is converting now (the one Word underlines thick,
+    /// the other clauses thin), in UTF-16 code units from the start of the marked text, or `None` when no clause is the target
+    /// (plain typing, or a platform that does not say). Called right after [`Self::replace_and_mark_text_in_range`].
+    /// Windows gives it from the composition attributes (`ATTR_TARGET_CONVERTED`, `ATTR_TARGET_NOTCONVERTED`); macOS from the
+    /// thick underline of the attributed string.
+    fn set_ime_target_range(
+        &mut self,
+        _target: Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) {
+    }
 
     /// Remove the IME 'composing' state from the document
     /// Corresponds to [unmarkText()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438239-unmarktext)

@@ -64,6 +64,15 @@ pub trait EntityInputHandler: 'static + Sized {
         cx: &mut Context<Self>,
     );
 
+    /// Modified by ibis inc.: see [`InputHandler::set_ime_target_range`] for details
+    fn set_ime_target_range(
+        &mut self,
+        _target: Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
     /// See [`InputHandler::bounds_for_range`] for details
     fn bounds_for_range(
         &mut self,
@@ -200,6 +209,16 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
                 cx,
             )
         });
+    }
+
+    fn set_ime_target_range(
+        &mut self,
+        target: Option<Range<usize>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.view
+            .update(cx, |view, cx| view.set_ime_target_range(target, window, cx));
     }
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut App) {
