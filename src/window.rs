@@ -1187,6 +1187,7 @@ pub struct Window {
     /// Recording only: the painted commands are recorded, not drawn (see
     /// `record_paints_only`).
     paint_record_only: bool,
+    prewarm_glyph_variants: bool,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
@@ -2040,6 +2041,7 @@ impl Window {
             removed: false,
             paint_record: None,
             paint_record_only: false,
+            prewarm_glyph_variants: false,
             platform_window,
             display_id,
             is_resizable,
@@ -3283,6 +3285,16 @@ impl Window {
     /// Added in ibisOffice's fork of gpui-pre 0.3.6.
     pub fn record_paints(&mut self) {
         self.paint_record = Some(Vec::new());
+    }
+
+    /// While `true`, every glyph that is painted is only rasterized into the atlas, at each of its subpixel positions
+    /// (`SUBPIXEL_VARIANTS_X` x `SUBPIXEL_VARIANTS_Y`), and nothing is drawn for it. A text that moves smoothly (an entrance animation)
+    /// then finds the glyphs it needs already rasterized (rasterizing is slow where it goes through the browser's canvas). The glyphs are
+    /// painted only where they are inside the clip, as always.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6.
+    pub fn set_prewarm_glyph_variants(&mut self, on: bool) {
+        self.prewarm_glyph_variants = on;
     }
 
     /// Whether the window only records what it paints (see [`Self::record_paints_only`]).
@@ -4917,6 +4929,24 @@ impl Window {
             subpixel_rendering,
             dilation,
         };
+
+        if self.prewarm_glyph_variants {
+            // Modified by ibis inc.: only rasterize, at every subpixel position (see `set_prewarm_glyph_variants`).
+            for y in 0..SUBPIXEL_VARIANTS_Y {
+                for x in 0..SUBPIXEL_VARIANTS_X {
+                    let mut variant = params.clone();
+                    variant.subpixel_variant = Point::new(x, y);
+                    if self.text_system().raster_bounds(&variant)?.is_zero() {
+                        continue;
+                    }
+                    self.sprite_atlas.get_or_insert_with(variant.clone().into(), &mut || {
+                        let (size, bytes) = self.text_system().rasterize_glyph(&variant)?;
+                        Ok(Some((size, Cow::Owned(bytes))))
+                    })?;
+                }
+            }
+            return Ok(());
+        }
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
