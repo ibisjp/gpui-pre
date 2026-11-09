@@ -1783,14 +1783,14 @@ impl PlatformInputHandler {
             .ok();
     }
 
-    /// Modified by ibis inc.: see [`InputHandler::set_ime_target_range`].
+    /// Modified by ibis inc.: see [`InputHandler::set_ime_clauses`].
     #[cfg_attr(
         not(any(target_os = "windows", target_os = "macos")),
         allow(dead_code)
     )]
-    pub fn set_ime_target_range(&mut self, target: Option<Range<usize>>) {
+    pub fn set_ime_clauses(&mut self, clauses: Vec<ImeClause>) {
         self.cx
-            .update(|window, cx| self.handler.set_ime_target_range(target, window, cx))
+            .update(|window, cx| self.handler.set_ime_clauses(clauses, window, cx))
             .ok();
     }
 
@@ -1968,6 +1968,36 @@ pub struct UTF16Selection {
 /// Zed's interface for handling text input from the platform's IME system
 /// This is currently a 1:1 exposure of the NSTextInputClient API:
 ///
+/// Modified by ibis inc.: the line an input method draws under a clause of the text being composed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImeLine {
+    /// A continuous line.
+    Solid,
+    /// A dotted line.
+    Dotted,
+    /// A wavy line.
+    Wavy,
+}
+
+/// Modified by ibis inc.: a clause of the text being composed (UTF-16 code units from the start of the marked text) and how the input
+/// method underlines it.
+///
+/// Windows (IMM32 `GCS_COMPATTR`, one attribute per UTF-16 unit): `ATTR_INPUT` (still being typed) thin dotted;
+/// `ATTR_TARGET_CONVERTED` (the clause being converted) thick solid; `ATTR_CONVERTED` and `ATTR_FIXEDCONVERTED` thin solid;
+/// `ATTR_TARGET_NOTCONVERTED` (the clause selected, not yet converted) thick solid; `ATTR_INPUT_ERROR` thin wavy (TSF's
+/// `TF_LS_SQUIGGLE` is the line for errors). Word with the Microsoft IME shows the first three that way.
+/// macOS (the `NSUnderline` attribute of the marked attributed string): the style's low bits `NSUnderlineStyleThick` (0x02) thick, the
+/// pattern `NSUnderlinePatternDot` (0x100) dotted, otherwise solid; a range with no underline attribute is not a clause.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImeClause {
+    /// UTF-16 code units from the start of the marked text.
+    pub range: Range<usize>,
+    /// Drawn thick.
+    pub thick: bool,
+    /// The line.
+    pub line: ImeLine,
+}
+
 /// <https://developer.apple.com/documentation/appkit/nstextinputclient>
 pub trait InputHandler: 'static {
     /// Get the range of the user's currently selected text, if any
@@ -2026,14 +2056,13 @@ pub trait InputHandler: 'static {
         cx: &mut App,
     );
 
-    /// Modified by ibis inc.: the clause of the marked text the input method is converting now (the one Word underlines thick,
-    /// the other clauses thin), in UTF-16 code units from the start of the marked text, or `None` when no clause is the target
-    /// (plain typing, or a platform that does not say). Called right after [`Self::replace_and_mark_text_in_range`].
-    /// Windows gives it from the composition attributes (`ATTR_TARGET_CONVERTED`, `ATTR_TARGET_NOTCONVERTED`); macOS from the
-    /// thick underline of the attributed string.
-    fn set_ime_target_range(
+    /// Modified by ibis inc.: how the input method underlines each clause of the marked text (what Word shows: the clause being
+    /// converted thick, the converted ones thin, the part still being typed dotted). `clauses` partition the marked text, in UTF-16
+    /// code units from the start of the marked text; empty when the platform does not say. Called right after
+    /// [`Self::replace_and_mark_text_in_range`]. See [`ImeClause`] for what each platform's attributes map to.
+    fn set_ime_clauses(
         &mut self,
-        _target: Option<Range<usize>>,
+        _clauses: Vec<ImeClause>,
         _window: &mut Window,
         _cx: &mut App,
     ) {
