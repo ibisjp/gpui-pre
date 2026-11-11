@@ -25,10 +25,13 @@ enum CachedLoadState<T> {
 impl<T: Clone + Send + 'static> CachedLoad<T> {
     pub(crate) fn new(future: impl Future<Output = T> + Send + 'static, cx: &App) -> Self {
         let state = Rc::new(RefCell::new(CachedLoadState::Loading(FxHashSet::default())));
+        // Modified by ibis inc.: count the loads still running (`App::loading_asset_count`), until this one ends or is dropped.
+        let loading = LoadingGuard::new(&cx.loading_asset_count);
         let task = cx.background_executor().spawn(future);
         let task = cx.spawn({
             let state = Rc::downgrade(&state);
             async move |cx| {
+                let _loading = loading;
                 let result = task.await;
                 let Some(state) = state.upgrade() else {
                     return;
@@ -63,6 +66,22 @@ impl<T: Clone + Send + 'static> CachedLoad<T> {
             }
             CachedLoadState::Loaded(result) => Some(result.clone()),
         }
+    }
+}
+
+/// One asset load counted in `App::loading_asset_count` while it lives. Modified by ibis inc.: added.
+struct LoadingGuard(Rc<std::cell::Cell<usize>>);
+
+impl LoadingGuard {
+    fn new(count: &Rc<std::cell::Cell<usize>>) -> Self {
+        count.set(count.get() + 1);
+        Self(count.clone())
+    }
+}
+
+impl Drop for LoadingGuard {
+    fn drop(&mut self) {
+        self.0.set(self.0.get().saturating_sub(1));
     }
 }
 

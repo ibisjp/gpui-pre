@@ -797,6 +797,8 @@ pub struct App {
 
     // assets
     pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
+    // Modified by ibis inc.: the asset loads still running (`loading_asset_count`).
+    pub(crate) loading_asset_count: Rc<std::cell::Cell<usize>>,
     asset_source: Arc<dyn AssetSource>,
     pub(crate) svg_renderer: SvgRenderer,
     http_client: Arc<dyn HttpClient>,
@@ -884,6 +886,7 @@ impl App {
                 foreground_journal,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
+                loading_asset_count: Default::default(),
                 asset_source,
                 http_client,
                 globals_by_type: Default::default(),
@@ -2807,6 +2810,13 @@ impl App {
     pub fn has_asset<A: Asset>(&self, source: &A::Source) -> bool {
         let asset_id = (TypeId::of::<A>(), hash(source));
         self.loading_assets.contains_key(&asset_id)
+    }
+
+    /// The number of asset loads still running (an image being decoded, a resource being read): a test waits for it to be
+    /// 0 before it compares what was drawn. Modified by ibis inc.: added.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn loading_asset_count(&self) -> usize {
+        self.loading_asset_count.get()
     }
 
     /// Starts loading an uncached asset and returns its result once available.
