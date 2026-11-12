@@ -1835,7 +1835,11 @@ impl PlatformInputHandler {
             // Walk backward from the caret looking for a line break. A change in
             // the Y coordinate means we crossed into the previous visual line, so
             // the line start is one position after the break point.
-            let caret = selection.range.end;
+            // Modified by ibis inc.: the walk starts at the END of the marked text, not at the caret (the caret may sit inside the
+            // marked text while a clause is being converted), so the candidate window is placed under the LAST line of the marked
+            // text and never over a wrapped part of it.
+            let _ = selection;
+            let caret = marked_range.end;
             if let Some(caret_bounds) = bounds_for_range(caret..caret) {
                 for i in (marked_range.start..caret).rev() {
                     if let Some(b) = bounds_for_range(i..i) {
