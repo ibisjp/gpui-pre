@@ -2002,6 +2002,32 @@ pub struct ImeClause {
     pub line: ImeLine,
 }
 
+impl ImeClause {
+    /// Modified by ibis inc.: the clauses of composing text for a platform that says only which part of it is selected, the way
+    /// browsers do (the selection of the element the composition is in, `selection` in UTF-16 units from the start of the `len` units of
+    /// the composing text). An input method selects the clause it is converting, and leaves the caret (nothing selected) while the
+    /// text is still being typed. So with a selection: the selected clause thick, the rest thin and solid (converted); without:
+    /// all of it dotted (not converted yet), as Word and the macOS input methods draw them.
+    pub fn from_selection(len: usize, selection: Range<usize>) -> Vec<ImeClause> {
+        let (a, b) = (selection.start.min(len), selection.end.min(len));
+        if len == 0 {
+            return Vec::new();
+        }
+        if a >= b {
+            return vec![ImeClause { range: 0..len, thick: false, line: ImeLine::Dotted }];
+        }
+        let mut out = Vec::new();
+        if a > 0 {
+            out.push(ImeClause { range: 0..a, thick: false, line: ImeLine::Solid });
+        }
+        out.push(ImeClause { range: a..b, thick: true, line: ImeLine::Solid });
+        if b < len {
+            out.push(ImeClause { range: b..len, thick: false, line: ImeLine::Solid });
+        }
+        out
+    }
+}
+
 /// <https://developer.apple.com/documentation/appkit/nstextinputclient>
 pub trait InputHandler: 'static {
     /// Get the range of the user's currently selected text, if any
