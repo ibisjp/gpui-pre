@@ -1237,6 +1237,8 @@ pub struct Window {
     window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
     touch_gestures: TouchGestureRecognizer,
+    /// The raw touch that is the current touch session (ibis inc., #209: see `TouchSessionEvent`).
+    touch_session: Option<crate::TouchId>,
     touch_prediction_enabled: bool,
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
@@ -2092,6 +2094,7 @@ impl Window {
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
+            touch_session: None,
             touch_gestures: TouchGestureRecognizer::new(
                 cx.platform
                     .gestures()
@@ -6040,6 +6043,13 @@ impl Window {
                 self.mouse_position = touch_drag.start_position;
                 PlatformInput::TouchDrag(touch_drag)
             }
+            PlatformInput::TouchSession(session) => {
+                self.mouse_position = session.position;
+                if session.phase == crate::TouchPhase::Cancelled {
+                    self.end_cancelled_touch(cx);
+                }
+                PlatformInput::TouchSession(session)
+            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
@@ -6127,6 +6137,38 @@ impl Window {
     /// dispatches whatever it resolves (scroll steps, synthesized taps)
     /// through the ordinary mouse-event path.
     fn dispatch_touch_event(&mut self, event: &TouchEvent, cx: &mut App) {
+        // ibis inc. (#209): the first finger starts a touch session, which ends with that finger (see `TouchSessionEvent`).
+        if event.phase == crate::TouchPhase::Started && self.touch_session.is_none() {
+            self.touch_session = Some(event.id);
+            self.dispatch_touch_session(crate::TouchPhase::Started, event.position, cx);
+        }
+        self.dispatch_touch_event_inner(event, cx);
+        if matches!(event.phase, crate::TouchPhase::Ended | crate::TouchPhase::Cancelled)
+            && self.touch_session == Some(event.id)
+        {
+            self.touch_session = None;
+            if event.phase == crate::TouchPhase::Cancelled {
+                self.end_cancelled_touch(cx);
+            }
+            self.dispatch_touch_session(event.phase, event.position, cx);
+        }
+    }
+
+    fn dispatch_touch_session(&mut self, phase: crate::TouchPhase, position: Point<Pixels>, cx: &mut App) {
+        self.mouse_position = position;
+        cx.propagate_event = true;
+        self.dispatch_mouse_event(&crate::TouchSessionEvent { phase, position }, cx);
+    }
+
+    /// A cancelled touch leaves nothing of gpui's own pending in-progress interaction behind (ibis inc., #209).
+    fn end_cancelled_touch(&mut self, cx: &mut App) {
+        cx.active_drag.take();
+        self.long_press_capture = None;
+        self.long_press_timer.take();
+        self.refresh();
+    }
+
+    fn dispatch_touch_event_inner(&mut self, event: &TouchEvent, cx: &mut App) {
         let mut event = event.clone();
         if !self.touch_prediction_enabled {
             event.predicted_position = None;

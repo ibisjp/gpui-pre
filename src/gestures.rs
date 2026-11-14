@@ -431,6 +431,33 @@ impl InputEvent for LongPressEvent {
 impl GestureEvent for LongPressEvent {}
 impl MouseEvent for LongPressEvent {}
 
+/// The start and the end of one single-finger touch (from the finger going down until it leaves), as a window
+/// event (ibis inc., #209: added).
+///
+/// `Cancelled` means: everything done on behalf of this touch since `Started` is to be undone (a second finger
+/// came down and the two fingers are a pinch, or the system took the touch). Listeners keep what they need at
+/// `Started` and put it back at `Cancelled`; `Ended` makes the work final.
+///
+/// A platform that turns the touch into mouse input sends `Started` before the `MouseDown` it makes of it,
+/// `Ended` after the `MouseUp`, and `Cancelled` (without a `MouseUp`) when the touch is cancelled. For a touch
+/// delivered as raw [`TouchEvent`]s the window makes these events itself.
+#[derive(Clone, Debug, Default)]
+pub struct TouchSessionEvent {
+    /// Started, Ended or Cancelled (never Moved).
+    pub phase: TouchPhase,
+    /// Where the finger is (down, up, or last seen).
+    pub position: Point<Pixels>,
+}
+
+impl Sealed for TouchSessionEvent {}
+impl InputEvent for TouchSessionEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::TouchSession(self)
+    }
+}
+impl GestureEvent for TouchSessionEvent {}
+impl MouseEvent for TouchSessionEvent {}
+
 /// Platform gesture recognition services.
 ///
 /// If your mobile platform supports native gesture recognition, use this
