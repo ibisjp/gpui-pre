@@ -66,7 +66,11 @@ leak-detection = ["backtrace"]
 profiler = ["dep:hdrhistogram"]
 screen-capture = ["scap"]
 stacker = ["dep:stacksafe"]
+# Modified by ibis inc. (2026-11-14): the headless app (TestPlatform, TestDispatcher, HeadlessAppContext), without the test
+# harness' crates (proptest, backtrace), so that the browser version can draw a window that only records what is painted.
+headless-app = ["http_client/test-support"]
 test-support = [
+    "headless-app",
     "leak-detection",
     "collections/test-support",
     "http_client/test-support",

@@ -26,15 +26,15 @@ use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, V
 pub use context::*;
 pub use entity_map::*;
 use gpui_util::{ResultExt, debug_panic};
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "headless-app"))]
 pub use headless_app_context::*;
 use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "headless-app"))]
 pub use test_app::*;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "headless-app"))]
 pub use test_context::*;
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+#[cfg(all(target_os = "macos", any(test, feature = "headless-app")))]
 pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
@@ -61,13 +61,13 @@ mod async_context;
 mod bench_context;
 mod context;
 mod entity_map;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "headless-app"))]
 mod headless_app_context;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "headless-app"))]
 mod test_app;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "headless-app"))]
 mod test_context;
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+#[cfg(all(target_os = "macos", any(test, feature = "headless-app")))]
 mod visual_test_context;
 
 /// The duration for which native applications wait for futures returned from
@@ -701,7 +701,7 @@ impl SystemWindowTabController {
 }
 
 pub(crate) enum GpuiMode {
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     Test {
         skip_drawing: bool,
     },
@@ -709,7 +709,7 @@ pub(crate) enum GpuiMode {
 }
 
 impl GpuiMode {
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn test() -> Self {
         GpuiMode::Test {
             skip_drawing: false,
@@ -719,7 +719,7 @@ impl GpuiMode {
     #[inline]
     pub(crate) fn skip_drawing(&self) -> bool {
         match self {
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(any(test, feature = "headless-app"))]
             GpuiMode::Test { skip_drawing } => *skip_drawing,
             GpuiMode::Production => false,
         }
@@ -819,7 +819,7 @@ pub struct App {
     pub(crate) inspector_renderer: Option<crate::InspectorRenderer>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_element_registry: InspectorElementRegistry,
-    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    #[cfg(any(test, feature = "headless-app", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
 
@@ -938,7 +938,7 @@ impl App {
                 synced_animation_epoch,
                 accessibility_force_disabled: false,
 
-                #[cfg(any(test, feature = "test-support", debug_assertions))]
+                #[cfg(any(test, feature = "headless-app", debug_assertions))]
                 name: None,
                 element_arena: RefCell::new(Arena::new(1024 * 1024)),
                 event_arena: Arena::new(1024 * 1024),
@@ -1839,7 +1839,7 @@ impl App {
                     }
                 }
             } else {
-                #[cfg(any(test, feature = "test-support"))]
+                #[cfg(any(test, feature = "headless-app"))]
                 if matches!(self.mode, GpuiMode::Test { .. }) {
                     for window in self
                         .windows
@@ -2193,7 +2193,7 @@ impl App {
     }
 
     /// Clear all stored globals. Does not notify global observers.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn clear_globals(&mut self) {
         self.globals_by_type.drain();
     }
@@ -2806,7 +2806,7 @@ impl App {
 
     /// Check whether an asset is present in GPUI's cache (loading or loaded),
     /// without fetching it.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn has_asset<A: Asset>(&self, source: &A::Source) -> bool {
         let asset_id = (TypeId::of::<A>(), hash(source));
         self.loading_assets.contains_key(&asset_id)
@@ -2814,7 +2814,7 @@ impl App {
 
     /// The number of asset loads still running (an image being decoded, a resource being read): a test waits for it to be
     /// 0 before it compares what was drawn. Modified by ibis inc.: added.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn loading_asset_count(&self) -> usize {
         self.loading_asset_count.get()
     }
@@ -2885,7 +2885,7 @@ impl App {
     }
 
     /// Returns the name for this [`App`].
-    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    #[cfg(any(test, feature = "headless-app", debug_assertions))]
     pub fn get_name(&self) -> Option<&'static str> {
         self.name
     }

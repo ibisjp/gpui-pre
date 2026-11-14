@@ -762,7 +762,7 @@ pub enum WindowControlArea {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
-#[cfg(feature = "test-support")]
+#[cfg(feature = "headless-app")]
 impl HitboxId {
     /// A placeholder HitboxId exclusively for integration testing API's that
     /// need a hitbox but where the value of the hitbox does not matter. The
@@ -999,9 +999,9 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
@@ -1023,7 +1023,7 @@ pub(crate) struct PrepaintStateIndex {
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     debug_bounds_index: usize,
     mouse_listeners_index: usize,
     input_handlers_index: usize,
@@ -1034,7 +1034,7 @@ pub(crate) struct PaintIndex {
 }
 
 impl Frame {
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
         self.debug_bounds.insert(selector.clone(), bounds);
         self.debug_bounds_records.push((selector, bounds));
@@ -1056,9 +1056,9 @@ impl Frame {
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
 
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(any(test, feature = "headless-app"))]
             debug_bounds: FxHashMap::default(),
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(any(test, feature = "headless-app"))]
             debug_bounds_records: Vec::new(),
 
             #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1085,7 +1085,7 @@ impl Frame {
         self.tab_stops.clear();
         self.focus = None;
 
-        #[cfg(any(test, feature = "test-support"))]
+        #[cfg(any(test, feature = "headless-app"))]
         {
             self.debug_bounds.clear();
             self.debug_bounds_records.clear();
@@ -2659,7 +2659,7 @@ impl Window {
     ///
     /// Tests have no platform frame loop, so this simulates the delivery of the
     /// next frame.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn simulate_next_frame(&mut self, cx: &mut App) -> usize {
         let callbacks = self.next_frame_callbacks.take();
         let count = callbacks.len();
@@ -2732,7 +2732,7 @@ impl Window {
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
         self.platform_window
             .render_to_image(&self.rendered_frame.scene)
@@ -2742,13 +2742,13 @@ impl Window {
     /// painted output without rasterizing the frame. Quad bounds are in scaled pixels and are
     /// not clipped; each quad carries the content mask it will be clipped to when drawn. Quads
     /// whose bounds don't intersect their content mask are culled at paint time and won't appear.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn painted_quads(&self) -> Vec<Quad> {
         self.rendered_frame.scene.quads.clone()
     }
 
     /// Returns the underlines in the most recently rendered frame's scene.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn painted_underlines(&self) -> Vec<Underline> {
         self.rendered_frame.scene.underlines.clone()
     }
@@ -2958,7 +2958,7 @@ impl Window {
     }
 
     /// Overrides the display scale factor for tests.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
         self.scale_factor = scale_factor;
         self.refresh();
@@ -3990,7 +3990,7 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(any(test, feature = "headless-app"))]
             debug_bounds_index: self.next_frame.debug_bounds_records.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
@@ -4003,7 +4003,7 @@ impl Window {
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
         // Cached elements still exist in the frame even when their paint methods don't run.
-        #[cfg(any(test, feature = "test-support"))]
+        #[cfg(any(test, feature = "headless-app"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
             [range.start.debug_bounds_index..range.end.debug_bounds_index]
         {
@@ -5508,7 +5508,7 @@ impl Window {
     }
 
     /// Returns whether every frame of an image is present in the sprite atlas.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn has_image_atlas_entry(&self, data: &RenderImage) -> bool {
         data.frame_count() > 0
             && (0..data.frame_count()).all(|frame_index| {
@@ -7610,7 +7610,7 @@ impl Window {
 
     /// For testing: set the current modifier keys state.
     /// This does not generate any events.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
     }
@@ -7618,7 +7618,7 @@ impl Window {
     /// For testing: simulate a mouse move event to the given position.
     /// This dispatches the event through the normal event handling path,
     /// which will trigger hover states and tooltips.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, cx: &mut App) {
         let event = PlatformInput::MouseMove(MouseMoveEvent {
             position,
@@ -7716,7 +7716,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Get the root view out of this window.
     ///
     /// This will fail if the window is closed or if the root view's type does not match `V`.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "headless-app"))]
     pub fn root<C>(&self, cx: &mut C) -> Result<Entity<V>>
     where
         C: AppContext,
