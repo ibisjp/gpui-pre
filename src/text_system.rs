@@ -102,6 +102,28 @@ impl MissingGlyph {
     }
 }
 
+/// A glyph the platform draws with its own text drawing and not from a font file it holds (the browser's Canvas): the text it draws and
+/// the font it asked for, so that a document such as a PDF can write it with a font file of its own.
+///
+/// Added in ibisOffice's fork of gpui-pre 0.3.6 (modified by ibis inc.).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnGlyph {
+    /// What the glyph draws (one grapheme cluster).
+    pub text: String,
+    /// The families asked for, first to last (the platform's own fallback families included): the first one that has the text is used.
+    pub families: Vec<String>,
+    /// The weight asked for.
+    pub weight: f32,
+    /// Whether italic or oblique was asked for.
+    pub italic: bool,
+    /// Whether the request is for a serif family (a mincho).
+    pub serif: bool,
+    /// Whether the request is for a monospace family.
+    pub monospace: bool,
+    /// Whether the glyph is a colour one (an emoji), which a font file of text cannot give.
+    pub color: bool,
+}
+
 /// Accepts missing glyphs detected by a platform text system.
 pub trait MissingGlyphSink: Send + Sync {
     /// Reports grapheme clusters that exhausted font fallback.
@@ -440,6 +462,13 @@ impl TextSystem {
     /// Added in ibisOffice's fork of gpui-pre 0.3.6.
     pub fn font_data(&self, font_id: FontId) -> Option<(Arc<Vec<u8>>, u32)> {
         self.platform_text_system.font_data(font_id)
+    }
+
+    /// What a glyph the platform draws itself is (see [`PlatformTextSystem::drawn_glyph`]).
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6 (modified by ibis inc.).
+    pub fn drawn_glyph(&self, font_id: FontId, glyph_id: GlyphId) -> Option<DrawnGlyph> {
+        self.platform_text_system.drawn_glyph(font_id, glyph_id)
     }
 
     /// Whether a font is drawn emboldened and slanted (see

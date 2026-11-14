@@ -1229,6 +1229,13 @@ pub trait PlatformTextSystem: Send + Sync {
     fn font_variations(&self, _font_id: FontId) -> Vec<([u8; 4], f32)> {
         Vec::new()
     }
+    /// For a glyph the platform draws itself (the browser's Canvas), not from a font file: what it draws and the font it was asked for,
+    /// so that a PDF can write the text with a font file of its own. `None` for a glyph of a font file (see `font_data`).
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6 (modified by ibis inc.).
+    fn drawn_glyph(&self, _font_id: FontId, _glyph_id: GlyphId) -> Option<crate::DrawnGlyph> {
+        None
+    }
     /// Get typographic bounds for a glyph.
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     /// Get the advance width for a glyph.
