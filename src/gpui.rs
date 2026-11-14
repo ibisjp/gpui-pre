@@ -26,6 +26,7 @@ mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
 mod gestures;
+mod pinch_tracker;
 mod global;
 mod input;
 mod inspector;
@@ -107,6 +108,7 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gestures::*;
+pub use pinch_tracker::*;
 pub use global::*;
 pub use gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
