@@ -2,6 +2,7 @@
 // Modified by ibis inc. for ibisOffice (2026-09-29): added `PlatformTextSystem::font_data`.
 // Modified by ibis inc. for ibisOffice (2026-10-20): added `PlatformTextSystem::synthetic_style`.
 // Modified by ibis inc. for ibisOffice (2026-10-28): added `PlatformTextSystem::font_variations`.
+// Modified by ibis inc. for ibisOffice (2026-11-14): added `PlatformWindow::discard_marked_text`.
 mod app_menu;
 mod keyboard;
 mod keystroke;
@@ -1046,6 +1047,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+
+    /// Ends the input method's composition session without a callback to the input handler (macOS: `discardMarkedText`), for when
+    /// the app has already taken the composing text in and moved on (another cell was chosen). A no-op where there is nothing to do.
+    fn discard_marked_text(&self) {}
 
     // Mobile platform methods.
 

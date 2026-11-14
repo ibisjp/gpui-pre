@@ -6930,6 +6930,11 @@ impl Window {
         self.platform_window.toggle_simple_fullscreen();
     }
 
+    /// Ends the input method's composition session (the app has taken the composing text in already). Modified by ibis inc. for ibisOffice (2026-11-14).
+    pub fn discard_marked_text(&self) {
+        self.platform_window.discard_marked_text();
+    }
+
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
     pub fn invalidate_character_coordinates(&self) {
         self.on_next_frame(|window, cx| {
