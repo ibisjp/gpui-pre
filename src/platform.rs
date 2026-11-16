@@ -1841,28 +1841,17 @@ impl PlatformInputHandler {
         mut bounds_for_range: impl FnMut(Range<usize>) -> Option<Bounds<Pixels>>,
     ) -> Option<Bounds<Pixels>> {
         if let Some(marked_range) = marked_range {
-            // Default to the start of the marked (composing) range.
-            let mut line_start = marked_range.start;
-
-            // Walk backward from the caret looking for a line break. A change in
-            // the Y coordinate means we crossed into the previous visual line, so
-            // the line start is one position after the break point.
-            // Modified by ibis inc.: the walk starts at the END of the marked text, not at the caret (the caret may sit inside the
-            // marked text while a clause is being converted), so the candidate window is placed under the LAST line of the marked
-            // text and never over a wrapped part of it.
+            // Modified by ibis inc.: the candidate window opens under the LAST character of the composing text (the newest one, where the
+            // typing is; on the last line when the text wraps), not at the start of its line or of the marked range. The rectangle asked for
+            // is that character's (`end - 1..end`; a handler that takes only the start of a range gives the place that character starts at);
+            // an empty marked range is the position itself.
             let _ = selection;
-            let caret = marked_range.end;
-            if let Some(caret_bounds) = bounds_for_range(caret..caret) {
-                for i in (marked_range.start..caret).rev() {
-                    if let Some(b) = bounds_for_range(i..i) {
-                        if (b.origin.y - caret_bounds.origin.y).abs() > px(0.1) {
-                            line_start = i + 1;
-                            break;
-                        }
-                    }
+            if marked_range.end > marked_range.start {
+                if let Some(bounds) = bounds_for_range(marked_range.end - 1..marked_range.end) {
+                    return Some(bounds);
                 }
             }
-            bounds_for_range(line_start..line_start)
+            bounds_for_range(marked_range.end..marked_range.end)
         } else {
             // No active composition — use the selection endpoint.
             let offset = if selection.reversed {
