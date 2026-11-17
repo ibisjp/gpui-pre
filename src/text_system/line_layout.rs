@@ -232,12 +232,17 @@ impl LineLayout {
             // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
             // but there are some differences, so we have to duplicate the code here.
             if LineWrapper::is_word_char(ch) {
-                if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
+                if (prev_ch == ' ' || LineWrapper::breaks_after(prev_ch)) && ch != ' ' && first_non_whitespace_ix.is_some() {
                     last_candidate_ix = Some(boundary);
                     last_candidate_x = x;
                 }
             } else {
-                if ch != ' ' && first_non_whitespace_ix.is_some() {
+                // (a line does not start with a closing mark nor end with an opening one: kinsoku, modified by ibis inc.; see `LineWrapper::not_at_line_start`)
+                if ch != ' '
+                    && first_non_whitespace_ix.is_some()
+                    && !LineWrapper::not_at_line_start(ch)
+                    && !LineWrapper::not_at_line_end(prev_ch)
+                {
                     last_candidate_ix = Some(boundary);
                     last_candidate_x = x;
                 }

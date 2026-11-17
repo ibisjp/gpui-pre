@@ -66,13 +66,15 @@ impl LineWrapper {
                         }
 
                         if Self::is_word_char(c) {
-                            if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
+                            if (prev_c == ' ' || Self::breaks_after(prev_c)) && c != ' ' && first_non_whitespace_ix.is_some() {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
                             }
                         } else {
-                            // CJK may not be space separated, e.g.: `Hello world你好世界`
-                            if c != ' ' && first_non_whitespace_ix.is_some() {
+                            // CJK may not be space separated, e.g.: `Hello world你好世界`; but a line does not start with a mark that
+                            // closes (、。」…) nor end with one that opens (「（…), the kinsoku (JIS X 4051; UAX #14 CL, EX, IS, NS and OP)
+                            // (modified by ibis inc.)
+                            if c != ' ' && first_non_whitespace_ix.is_some() && !Self::not_at_line_start(c) && !Self::not_at_line_end(prev_c) {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
                             }
@@ -445,6 +447,29 @@ impl LineWrapper {
         (text, Cow::Borrowed(runs))
     }
 
+    /// Characters a line does not start with (kinsoku: JIS X 4051's, UAX #14's CL, EX, IS and NS classes for Japanese text): the closing brackets and quotes,
+    /// the stops, the small kana, the prolonged sound mark, the iteration marks and the middle dot (modified by ibis inc.).
+    pub(crate) fn not_at_line_start(c: char) -> bool {
+        matches!(
+            c,
+            '、' | '。' | '，' | '．' | '！' | '？' | '：' | '；' | '・' | '‥' | '…' | '’' | '”' | '）' | '〕' | '］' | '｝' | '〉' | '》' | '」' | '』' | '】' | '〙' | '〗' | '〟' | '｠' | '»'
+                | 'ー' | '々' | '〻' | 'ゝ' | 'ゞ' | 'ヽ' | 'ヾ' | '゛' | '゜' | '･' | '､' | '｡' | '｣'
+                | 'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' | 'っ' | 'ゃ' | 'ゅ' | 'ょ' | 'ゎ' | 'ゕ' | 'ゖ'
+                | 'ァ' | 'ィ' | 'ゥ' | 'ェ' | 'ォ' | 'ッ' | 'ャ' | 'ュ' | 'ョ' | 'ヮ' | 'ヵ' | 'ヶ' | 'ㇰ'..='ㇿ'
+        )
+    }
+
+    /// Whether a line may break after `c` before a Latin word (UAX #14: between an ideograph, a kana or a mark of East Asian text and a letter): the East Asian
+    /// characters but the opening marks a line does not end with (modified by ibis inc.).
+    pub(crate) fn breaks_after(c: char) -> bool {
+        c >= '\u{2E80}' && !Self::is_word_char(c) && !Self::not_at_line_end(c)
+    }
+
+    /// Characters a line does not end with (UAX #14's OP class for Japanese text): the opening brackets and quotes (modified by ibis inc.).
+    pub(crate) fn not_at_line_end(c: char) -> bool {
+        matches!(c, '‘' | '“' | '（' | '〔' | '［' | '｛' | '〈' | '《' | '「' | '『' | '【' | '〘' | '〖' | '〝' | '｟' | '｢')
+    }
+
     /// Any character in this list should be treated as a word character,
     /// meaning it can be part of a word that should not be wrapped.
     pub(crate) fn is_word_char(c: char) -> bool {
@@ -713,6 +738,34 @@ mod tests {
                 ..Default::default()
             })
             .collect()
+    }
+
+    /// A line does not start with a closing mark nor end with an opening one (kinsoku): the mark goes with the character before it (modified by ibis inc.).
+    #[test]
+    fn test_wrap_line_keeps_japanese_punctuation_off_the_line_start() {
+        let mut wrapper = build_wrapper();
+        let width = wrapper.width_for_char('あ');
+        let wrap_width = width * 5.0;
+        // Six characters in a line of five: the stop would start the second line; the character before it goes there with it.
+        assert_eq!(
+            wrapper.wrap_line(&[LineFragment::text("あいうえお。かき")], wrap_width).map(|b| b.ix).collect::<Vec<_>>(),
+            &["あいうえ".len()],
+        );
+        // An opening bracket stays with what follows it.
+        assert_eq!(
+            wrapper.wrap_line(&[LineFragment::text("あいうえ「おかき")], wrap_width).map(|b| b.ix).collect::<Vec<_>>(),
+            &["あいうえ".len()],
+        );
+        // A small kana and the prolonged sound mark do not start a line either.
+        assert_eq!(
+            wrapper.wrap_line(&[LineFragment::text("あいうえおっかき")], wrap_width).map(|b| b.ix).collect::<Vec<_>>(),
+            &["あいうえ".len()],
+        );
+        // Without a mark that cannot start a line: where the line is full.
+        assert_eq!(
+            wrapper.wrap_line(&[LineFragment::text("あいうえおかき")], wrap_width).map(|b| b.ix).collect::<Vec<_>>(),
+            &["あいうえお".len()],
+        );
     }
 
     #[test]
