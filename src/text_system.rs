@@ -1,3 +1,4 @@
+// Modified by ibis inc. for ibisOffice (2026-11-20): added `TextSystem::glyph_ink_extent`.
 // Modified by ibis inc. for ibisOffice (2026-09-25): added `TextSystem::line_gap`.
 // Modified by ibis inc. for ibisOffice (2026-09-29): added `TextSystem::font_data`.
 // Modified by ibis inc. for ibisOffice (2026-10-20): added `TextSystem::synthetic_style`.
@@ -462,6 +463,36 @@ impl TextSystem {
     /// Added in ibisOffice's fork of gpui-pre 0.3.6.
     pub fn font_data(&self, font_id: FontId) -> Option<(Arc<Vec<u8>>, u32)> {
         self.platform_text_system.font_data(font_id)
+    }
+
+    /// The horizontal extent of the ink of a glyph, as its distance from the glyph's origin to the left and to the right edge of what
+    /// is drawn (pixels at `font_size`; the left is negative when the ink starts before the origin). It comes from the raster bounds
+    /// the platform reports for the glyph (a font file's outline, or what a browser's Canvas measures for a glyph drawn by the
+    /// browser), taken at a large scale so that the pixel the bounds are rounded to is small. `None` when the glyph has no ink or the
+    /// platform cannot say.
+    ///
+    /// Added in ibisOffice's fork of gpui-pre 0.3.6 (modified by ibis inc.).
+    pub fn glyph_ink_extent(&self, font_id: FontId, glyph_id: GlyphId, font_size: Pixels) -> Option<(Pixels, Pixels)> {
+        let size = font_size.0;
+        if !(size.is_finite() && size > 0.0) {
+            return None;
+        }
+        let scale_factor = (1000.0 / size).clamp(1.0, 32.0);
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size,
+            subpixel_variant: Point::default(),
+            scale_factor,
+            is_emoji: false,
+            subpixel_rendering: false,
+            dilation: 0,
+        };
+        let bounds = self.raster_bounds(&params).ok()?;
+        if bounds.size.width.0 <= 0 {
+            return None;
+        }
+        Some((px(bounds.origin.x.0 as f32 / scale_factor), px((bounds.origin.x.0 + bounds.size.width.0) as f32 / scale_factor)))
     }
 
     /// What a glyph the platform draws itself is (see [`PlatformTextSystem::drawn_glyph`]).
